@@ -1,3 +1,6 @@
+2016-07-29:
+	* (joshuagl) Remove spurious bindings clear
+
 2016-07-28:
 	* (seebs) Fix performance issue on deletion with xattr changes.
 
