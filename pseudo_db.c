@@ -1849,12 +1849,23 @@ pdb_did_unlink_files(int deleting) {
 int
 pdb_did_unlink_file(char *path, int deleting) {
 	static sqlite3_stmt *delete_exact;
-	int rc, exact;
+	static sqlite3_stmt *find_file;
+	int rc, exact, findrc;
 	char *sql_delete_exact = "DELETE FROM files WHERE path = ? AND deleting = ?;";
+	char *sql_find_file = "SELECT dev, ino FROM files WHERE path = ? AND deleting = ?;";
+	dev_t dev;
+	unsigned long long ino;
 
 	if (!file_db && get_dbs()) {
 		pseudo_diag("%s: database error.\n", __func__);
 		return 0;
+	}
+	if (!find_file) {
+		rc = sqlite3_prepare_v2(file_db, sql_find_file, strlen(sql_find_file), &find_file, NULL);
+		if (rc) {
+			dberr(file_db, "couldn't prepare SELECT statement to find file");
+			return 1;
+		}
 	}
 	if (!delete_exact) {
 		rc = sqlite3_prepare_v2(file_db, sql_delete_exact, strlen(sql_delete_exact), &delete_exact, NULL);
@@ -1867,6 +1878,33 @@ pdb_did_unlink_file(char *path, int deleting) {
 		pseudo_debug(PDBGF_DB, "cannot unlink a file without a path.");
 		return 1;
 	}
+
+	/* We try and find the ino and dev for the file before we unlink it so
+	 * that we can update the xattr db without having to do a full sweep
+	 */
+	sqlite3_bind_text(find_file, 1, path, -1, SQLITE_STATIC);
+	sqlite3_bind_int(find_file, 2, deleting);
+	findrc = sqlite3_step(find_file);
+	switch (findrc) {
+	case SQLITE_ROW:
+		pseudo_diag("did_unlink_file file found\n");
+		dev = sqlite3_column_int64(find_file, 0);
+		ino = sqlite3_column_int64(find_file, 1);
+		findrc = 0;
+		pseudo_diag("did_unlink_file found details. ino=%llu dev=%lu\n", ino, dev);
+		break;
+	case SQLITE_DONE:
+		pseudo_debug(PDBGF_DB | PDBGF_VERBOSE, "did_unlink_file: sqlite_done on first row\n");
+		findrc = 1;
+		break;
+	default:
+		dberr(file_db, "did_unlink_file: select returned neither a row or done");
+		findrc = 1;
+		break;
+	}
+	sqlite3_reset(find_file);
+	sqlite3_clear_bindings(find_file);
+
 	sqlite3_bind_text(delete_exact, 1, path, -1, SQLITE_STATIC);
 	sqlite3_bind_int(delete_exact, 2, deleting);
 	file_db_dirty = 1;
@@ -1878,10 +1916,23 @@ pdb_did_unlink_file(char *path, int deleting) {
 	pseudo_debug(PDBGF_DB, "(exact %d)\n", exact);
 	sqlite3_reset(delete_exact);
 	sqlite3_clear_bindings(delete_exact);
-	/* we have to clean everything because we don't know for sure the
-	 * device/inode...
-	 */
-	pdb_clear_unused_xattrs();
+
+	if (findrc == 0) {
+		/* we have an inode and/or device for the file, so let's just
+		 * remove entries matching that file
+		 */
+		// populate a dummy message to pass to pdb_clear_xattrs
+		pseudo_msg_t *del;
+		memset(&del, 0, sizeof(del));
+		del->dev = dev;
+		del->ino = ino;
+		pdb_clear_xattrs(del);
+	} else {
+		/* we have to clean everything because we don't know for sure the
+		 * device/inode...
+		 */
+		pdb_clear_unused_xattrs();
+	}
 	return rc != SQLITE_DONE;
 }
 
