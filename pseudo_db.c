@@ -1847,7 +1847,7 @@ pdb_did_unlink_files(int deleting) {
 
 /* confirm deletion of a specific file by a given client */
 int
-pdb_did_unlink_file(char *path, int deleting) {
+pdb_did_unlink_file(pseudo_msg_t *msg, int deleting) {
 	static sqlite3_stmt *delete_exact;
 	int rc, exact;
 	char *sql_delete_exact = "DELETE FROM files WHERE path = ? AND deleting = ?;";
@@ -1863,11 +1863,11 @@ pdb_did_unlink_file(char *path, int deleting) {
 			return 1;
 		}
 	}
-	if (!path) {
+	if (!msg->path) {
 		pseudo_debug(PDBGF_DB, "cannot unlink a file without a path.");
 		return 1;
 	}
-	sqlite3_bind_text(delete_exact, 1, path, -1, SQLITE_STATIC);
+	sqlite3_bind_text(delete_exact, 1, msg->path, -1, SQLITE_STATIC);
 	sqlite3_bind_int(delete_exact, 2, deleting);
 	file_db_dirty = 1;
 	rc = sqlite3_step(delete_exact);
@@ -1878,10 +1878,7 @@ pdb_did_unlink_file(char *path, int deleting) {
 	pseudo_debug(PDBGF_DB, "(exact %d)\n", exact);
 	sqlite3_reset(delete_exact);
 	sqlite3_clear_bindings(delete_exact);
-	/* we have to clean everything because we don't know for sure the
-	 * device/inode...
-	 */
-	pdb_clear_unused_xattrs();
+	pdb_clear_xattrs(msg);
 	return rc != SQLITE_DONE;
 }
 

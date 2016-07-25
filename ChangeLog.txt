@@ -1,3 +1,9 @@
+2016-07-25:
+	* (joshuagl) Pass full msg to pdb_did_unlink_file so that we can
+	  make use of the faster pdb_clear_xattrs() rather than calling
+	  the much slower pdb_clear_unused_xattrs() for each DID_UNLINK
+	  message.
+
 2016-07-13:
 	* (joshuagl) Remove spurious bindings clear
 
